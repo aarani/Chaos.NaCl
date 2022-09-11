@@ -4,7 +4,7 @@ namespace Chaos.NaCl.Internal.Ed25519Ref10
 {
 	internal static partial class Ed25519Operations
 	{
-		/*public static void crypto_sign(
+        /*public static void crypto_sign(
 		  byte[] sm, out int smlen,
 		   byte[] m, int mlen,
 		   byte[] sk
@@ -39,7 +39,42 @@ namespace Chaos.NaCl.Internal.Ed25519Ref10
 			Array.Copy(sm32, 0, sm, 32, 32);
 		}*/
 
-		public static void crypto_sign2(
+        public static void crypto_sign_with_preexpanded_secret_key(
+            byte[] sig, int sigoffset,
+            byte[] m, int moffset, int mlen,
+            byte[] sk, int skoffset,
+            byte[] pk, int pkOffset)
+        {
+            byte[] r;
+            byte[] hram;
+            GroupElementP3 R;
+            var hasher = new Sha512();
+            {
+                hasher.Init();
+                hasher.Update(sk, skoffset + 32, 32);
+                hasher.Update(m, moffset, mlen);
+                r = hasher.Finish();
+
+                ScalarOperations.sc_reduce(r);
+                GroupOperations.ge_scalarmult_base(out R, r, 0);
+                GroupOperations.ge_p3_tobytes(sig, sigoffset, ref R);
+
+                hasher.Init();
+                hasher.Update(sig, sigoffset, 32);
+                hasher.Update(pk, pkOffset, 32);
+                hasher.Update(m, moffset, mlen);
+                hram = hasher.Finish();
+
+                ScalarOperations.sc_reduce(hram);
+                var s = new byte[32];//todo: remove allocation
+                Array.Copy(sig, sigoffset + 32, s, 0, 32);
+                ScalarOperations.sc_muladd(s, hram, sk, r);
+                Array.Copy(s, 0, sig, sigoffset + 32, 32);
+                CryptoBytes.Wipe(s);
+            }
+        }
+
+        public static void crypto_sign2(
 			byte[] sig, int sigoffset,
 			byte[] m, int moffset, int mlen,
 			byte[] sk, int skoffset)

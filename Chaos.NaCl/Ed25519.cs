@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Text;
 using Chaos.NaCl.Internal.Ed25519Ref10;
 
 namespace Chaos.NaCl
@@ -48,6 +49,21 @@ namespace Chaos.NaCl
             if (message.Array == null)
                 throw new ArgumentNullException("message.Array");
             Ed25519Operations.crypto_sign2(signature.Array, signature.Offset, message.Array, message.Offset, message.Count, expandedPrivateKey.Array, expandedPrivateKey.Offset);
+        }
+
+        public static void SignWithPrehashedPrivateKey(ArraySegment<byte> signature, ArraySegment<byte> message, ArraySegment<byte> expandedPrivateKey, ArraySegment<byte> publicKey)
+        {
+            if (signature.Array == null)
+                throw new ArgumentNullException("signature.Array");
+            if (signature.Count != SignatureSizeInBytes)
+                throw new ArgumentException("signature.Count");
+            if (expandedPrivateKey.Array == null)
+                throw new ArgumentNullException("expandedPrivateKey.Array");
+            if (expandedPrivateKey.Count != ExpandedPrivateKeySizeInBytes)
+                throw new ArgumentException("expandedPrivateKey.Count");
+            if (message.Array == null)
+                throw new ArgumentNullException("message.Array");
+            Ed25519Operations.crypto_sign_with_preexpanded_secret_key(signature.Array, signature.Offset, message.Array, message.Offset, message.Count, expandedPrivateKey.Array, expandedPrivateKey.Offset, publicKey.Array, publicKey.Offset);
         }
 
         public static byte[] Sign(byte[] message, byte[] expandedPrivateKey)
@@ -164,6 +180,59 @@ namespace Chaos.NaCl
             /* There isn't a regular ge_scalarmult -- we have to do tweak*A + zero*B. */
             GroupOperations.ge_double_scalarmult_vartime(out var Aprime, blindingFator, ref A, zeros);
             GroupOperations.ge_tobytes(output,0, ref Aprime);
+
+            return true;
+        }
+
+        public static bool CalculateBlindedPrivateKey(byte[] expandedPrivateKey, byte[] blindingFator, string prefixMsg, out byte[] output)
+        {
+            if (expandedPrivateKey is null)
+                throw new ArgumentNullException("publicKey.Array");
+            if (expandedPrivateKey.Length != 64)
+                throw new ArgumentException("expandedPrivateKey.Count != 64");
+
+            byte[] prefixMsgInBytes = Encoding.ASCII.GetBytes(prefixMsg);
+
+            output = new byte[64];
+
+            byte[] zeros = new byte[32];
+            byte[] tweak = new byte[64];
+            Array.Copy(blindingFator, 0, tweak, 0, blindingFator.Length);
+
+            ScalarOperations.sc_muladd(output, expandedPrivateKey, tweak, zeros);
+
+            var hasher = new Sha512();
+            hasher.Update(prefixMsgInBytes, 0, prefixMsgInBytes.Length);
+            hasher.Update(expandedPrivateKey, 32, 32);
+            byte[] newRH = hasher.Finish();
+
+            Array.Copy(newRH, 0, output, 32, 32);
+
+            return true;
+        }
+
+        public static bool Ed25519PublicKeyFromCurve25519(byte[] publicKey, bool signbit, out byte[] output)
+        {
+            output = new byte[32];
+            
+            FieldElement u;
+            FieldElement one;
+            FieldElement y;
+            FieldElement uplus1;
+            FieldElement uminus1;
+            FieldElement inv_uplus1;
+
+            FieldOperations.fe_frombytes(out u, publicKey, 0);
+            FieldOperations.fe_1(out one);
+            FieldOperations.fe_sub(out uminus1, ref u, ref one);
+            FieldOperations.fe_add(out uplus1, ref u, ref one);
+            FieldOperations.fe_invert(out inv_uplus1, ref uplus1);
+            FieldOperations.fe_mul(out y, ref uminus1, ref inv_uplus1);
+
+            FieldOperations.fe_tobytes(output, 0, ref y);
+
+            /* propagate sign. */
+            output[31] |= (byte)(Convert.ToInt32(!!signbit) << 7);
 
             return true;
         }
